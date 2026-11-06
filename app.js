@@ -2253,3 +2253,173 @@ $('#cv-verify')?.addEventListener('click', async () => {
   await refreshVaultUI();
   await refreshLockUI();
 });
+
+/* ══ 备份 / 恢复 / 重新生成恢复码（ADR-020/021、FR-SET2/SET3、FR-K5、② §3）══ */
+
+// 错误要「吵」且说清后果（规则 6）：任何失败都必须明示本机数据未被改动
+function backupError(e){
+  const m = (e && e.message) || '未知错误';
+  if (m === 'E_BACKUP_CORRUPT') return '备份已损坏或被篡改';
+  if (m === 'E_BACKUP_FORMAT') return '这不是有效的 .vaultenc 备份文件';
+  if (m === 'E_UNLOCK') return '主密码或恢复码错误（或备份不属于此金库）';
+  if (m === 'E_INTEGRITY_FAIL') return '记录哈希链不完整，已拒绝';
+  if (m === 'E_NO_VAULT') return '本机尚未创建金库';
+  return m;
+}
+
+// FR-SET2：导出单文件加密备份。备份不含恢复码，故离线保管时须与恢复码分开（Q11）。
+$('#backup-export')?.addEventListener('click', async () => {
+  if (!VAULT){ toast('请先解锁金库'); return; }
+  try {
+    const file = await VaultCore.exportBackup(STORE, VAULT);
+    const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vault-' + new Date().toISOString().slice(0, 10) + '.vaultenc';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('已导出加密备份 · 请离线保管，恢复码不要与备份同放');
+  } catch (e) {
+    toast('导出失败：' + backupError(e));
+  }
+});
+
+// FR-SET3：选文件 → 弹层收主密码 + 恢复码 → 整库覆盖
+let PENDING_BACKUP = null;
+$('#backup-import')?.addEventListener('click', () => $('#backup-file')?.click());
+$('#backup-file')?.addEventListener('change', async ev => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = '';                       // 允许重复选同一文件
+  if (!f) return;
+  try {
+    PENDING_BACKUP = JSON.parse(await f.text());
+    $('#import-file-name').textContent = f.name + ' · ' + (f.size / 1024).toFixed(1) + ' KB';
+    $('#import-pass').value = '';
+    $('#import-recovery').value = '';
+    $('#import-hint').textContent = '';
+    $('#importmodal-scrim').classList.add('on');
+    $('#importmodal').classList.add('on');
+    setTimeout(() => $('#import-pass').focus(), 50);
+  } catch (e) {
+    PENDING_BACKUP = null;
+    toast('备份文件不是有效 JSON：' + ((e && e.message) || '未知错误'));
+  }
+});
+
+function closeImportModal(){
+  PENDING_BACKUP = null;
+  $('#import-pass').value = '';
+  $('#import-recovery').value = '';
+  $('#importmodal-scrim').classList.remove('on');
+  $('#importmodal').classList.remove('on');
+}
+$('#importmodal-close')?.addEventListener('click', closeImportModal);
+$('#importmodal-cancel')?.addEventListener('click', closeImportModal);
+$('#importmodal-scrim')?.addEventListener('click', closeImportModal);
+$('#importmodal-ok')?.addEventListener('click', async () => {
+  const hint = $('#import-hint');
+  const pw = $('#import-pass').value;
+  const rc = ($('#import-recovery').value || '').trim();
+  if (!PENDING_BACKUP){ hint.textContent = '请先选择备份文件'; return; }
+  if (!pw || !rc){ hint.textContent = '请输入主密码与 26 位恢复码'; return; }
+  const btn = $('#importmodal-ok');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '恢复中…';
+  try {
+    const r = await VaultCore.importBackup(STORE, PENDING_BACKUP, {
+      masterPassword: pw, recoveryCode: rc,
+    });
+    // ADR-015：恢复后建立本机便利副本，之后日常解锁只需主密码
+    try {
+      await VaultCore.saveSecretKey(r.meta.vaultId, r.secretKey);
+    } catch (e) {
+      toast('便利副本写入失败：' + ((e && e.message) || '未知错误') + '（仍可手输恢复码解锁）');
+    }
+    if (VAULT) VaultCore.lock(VAULT);         // FR-U5：清内存里的 DEK / Secret Key
+    VAULT = null;
+    ENTRIES = [];
+    closeImportModal();
+    setView('unlock');
+    await refreshLockUI();
+    toast('恢复完成 · ' + r.count + ' 条记录，请用主密码解锁');
+  } catch (e) {
+    hint.textContent = '恢复失败：' + backupError(e) + '（本机数据未改动）';
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+    $('#import-pass').value = '';
+    $('#import-recovery').value = '';
+  }
+});
+
+// FR-K5：强提示「其余所有设备将全部失效」→ 验主密码 → 展示新码要求手抄
+function resetRotateModal(){
+  $('#rotate-pass').value = '';
+  $('#rotate-hint').textContent = '';
+  $('#rotate-step1').style.display = '';
+  $('#rotate-step2').style.display = 'none';
+  $('#rotate-new-code').textContent = '';
+  const btn = $('#rotatemodal-ok');
+  btn.textContent = '生成新恢复码';
+  btn.dataset.done = '';
+  btn.style.display = '';
+}
+function closeRotateModal(){
+  resetRotateModal();
+  $('#rotatemodal-scrim').classList.remove('on');
+  $('#rotatemodal').classList.remove('on');
+}
+$('#rotate-recovery')?.addEventListener('click', () => {
+  if (!VAULT){ toast('请先解锁金库'); return; }
+  openConfirm({
+    title: '重新生成恢复码',
+    body: '当前 26 位恢复码将立即作废，其余所有设备将全部失效，必须逐台重新录入新码。旧备份文件仍对应旧恢复码。请确认你已能离线保管新码。',
+    okText: '我已了解，继续',
+    danger: true,
+    onOk: () => {
+      resetRotateModal();
+      $('#rotatemodal-scrim').classList.add('on');
+      $('#rotatemodal').classList.add('on');
+      setTimeout(() => $('#rotate-pass').focus(), 50);
+    },
+  });
+});
+$('#rotatemodal-close')?.addEventListener('click', closeRotateModal);
+$('#rotatemodal-cancel')?.addEventListener('click', closeRotateModal);
+$('#rotatemodal-scrim')?.addEventListener('click', closeRotateModal);
+$('#rotatemodal-ok')?.addEventListener('click', async () => {
+  const btn = $('#rotatemodal-ok');
+  if (btn.dataset.done === '1'){ closeRotateModal(); return; }
+  const hint = $('#rotate-hint');
+  const pw = $('#rotate-pass').value;
+  if (!pw){ hint.textContent = '请输入当前主密码'; return; }
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '重新封装中…';
+  try {
+    const r = await VaultCore.rotateRecoveryCode(STORE, VAULT, { masterPassword: pw });
+    VAULT.secretKey = r.secretKey;
+    VAULT.recoveryCode = r.recoveryCode;
+    try { await VaultCore.saveSecretKey(VAULT.vaultId, r.secretKey); }
+    catch (e) { toast('便利副本更新失败：' + ((e && e.message) || '未知错误')); }
+    $('#rotate-pass').value = '';
+    $('#rotate-step1').style.display = 'none';
+    $('#rotate-step2').style.display = '';
+    $('#rotate-new-code').textContent = r.recoveryCode;
+    btn.textContent = '我已抄好，关闭';
+    btn.dataset.done = '1';
+    void refreshVaultUI();               // 指纹随 wrapped_dek 变化，接真实值
+    toast('恢复码已更新 · 旧码作废，其余所有设备将全部失效');
+  } catch (e) {
+    hint.textContent = '失败：' + backupError(e) + '（恢复码未改动）';
+  } finally {
+    btn.disabled = false;
+    if (btn.dataset.done !== '1') btn.textContent = orig;
+  }
+});
+
+// FR-SET4（P1）尚未实现：不假装可用，点按明确告知（规则 5 / 规则 6）
+$('#destroy-vault')?.addEventListener('click', () => {
+  toast('销毁本地金库尚未实现（FR-SET4 / P1）');
+});

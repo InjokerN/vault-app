@@ -298,11 +298,21 @@
         </div>
       </section>
 
-      <section class="sgroup danger-group">
-        <h2 class="sgroup-title">导出与销毁</h2>
+      <section class="sgroup">
+        <h2 class="sgroup-title">备份与恢复</h2>
         <div class="srow srow-btns">
-          <button class="btn ghost">导出加密备份</button>
-          <button class="btn danger-ghost">销毁本地金库</button>
+          <button class="btn ghost" id="backup-export">导出加密备份</button>
+          <button class="btn ghost" id="backup-import">从备份恢复</button>
+        </div>
+        <div class="hint" style="margin-top:8px">备份不含恢复码；恢复时仍需主密码与该金库的 26 位恢复码（Q11 / ADR-022）。</div>
+        <input type="file" id="backup-file" accept=".vaultenc,application/json" style="display:none">
+      </section>
+
+      <section class="sgroup danger-group">
+        <h2 class="sgroup-title">危险操作</h2>
+        <div class="srow srow-btns">
+          <button class="btn ghost" id="rotate-recovery">重新生成恢复码</button>
+          <button class="btn danger-ghost" id="destroy-vault">销毁本地金库</button>
         </div>
       </section>
     </div>
@@ -491,6 +501,58 @@
   <div class="modal-foot">
     <button class="btn ghost" id="confirm-cancel">取消</button>
     <button class="btn danger" id="confirm-ok">确认</button>
+  </div>
+</div>
+
+<!-- 从加密备份恢复（FR-SET3 / ADR-020）：整库覆盖，须先二次告知后果 -->
+<div class="modal-scrim" id="importmodal-scrim"></div>
+<div class="modal" id="importmodal">
+  <div class="modal-head">
+    <h2>从加密备份恢复</h2>
+    <button class="icon-btn" id="importmodal-close" aria-label="关闭">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <div class="hint" id="import-file-name" style="margin-top:0"></div>
+    <div class="hint" style="color:var(--danger)">恢复会<b>整库覆盖</b>本机当前金库，现有条目将被替换，且不可撤销。</div>
+    <label class="field-label" for="import-pass" style="margin-top:14px">主密码</label>
+    <input id="import-pass" class="master-input" type="password" autocomplete="off" spellcheck="false" placeholder="备份所属金库的主密码">
+    <label class="field-label" for="import-recovery" style="margin-top:12px">26 位恢复码</label>
+    <input id="import-recovery" class="master-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="N6QYGZWK...">
+    <div class="hint" id="import-hint"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="importmodal-cancel">取消</button>
+    <button class="btn danger" id="importmodal-ok">覆盖并恢复</button>
+  </div>
+</div>
+
+<!-- 重新生成恢复码（FR-K5）：两步——先验主密码，再展示新码要求手抄 -->
+<div class="modal-scrim" id="rotatemodal-scrim"></div>
+<div class="modal" id="rotatemodal">
+  <div class="modal-head">
+    <h2>重新生成恢复码</h2>
+    <button class="icon-btn" id="rotatemodal-close" aria-label="关闭">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <div class="hint" style="margin-top:0;color:var(--danger)">旧恢复码将立即作废，<b>其余所有设备将全部失效</b>，必须逐台重新录入新码。旧备份文件仍对应旧恢复码。</div>
+    <div id="rotate-step1">
+      <label class="field-label" for="rotate-pass" style="margin-top:14px">当前主密码</label>
+      <input id="rotate-pass" class="master-input" type="password" autocomplete="off" spellcheck="false">
+      <div class="hint" id="rotate-hint"></div>
+    </div>
+    <div id="rotate-step2" style="display:none">
+      <label class="field-label" style="margin-top:14px">新的 26 位恢复码（请立即离线手抄）</label>
+      <div class="mono" id="rotate-new-code" style="font-size:18px;letter-spacing:.12em;word-break:break-all;padding:12px;border:1px solid var(--line-strong);border-radius:var(--r2);background:var(--bg-3)"></div>
+      <div class="hint">抄好后关闭本窗口；本机便利副本已更新，日常解锁仍只需主密码。</div>
+    </div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="rotatemodal-cancel">取消</button>
+    <button class="btn danger" id="rotatemodal-ok">生成新恢复码</button>
   </div>
 </div>
 

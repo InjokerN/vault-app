@@ -1,5 +1,5 @@
 /* VAULT shell 缓存 —— 只缓存 UI，不缓存任何数据（ADR-033） */
-const VERSION = 'v20';
+const VERSION = 'v21';
 const CACHE = 'vault-shell-' + VERSION;
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
