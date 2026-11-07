@@ -47,6 +47,8 @@ export async function unlockVault(store, { masterPassword, recoveryCode, secretK
   if (!(sk instanceof Uint8Array) || sk.length !== 16) throw new Error('E_UNLOCK');
   const raw = deriveRawKey(masterPassword, meta.salt);
   const kek = deriveKEK(raw, sk);
+  // AAD 与分片键一律绑定本机金库的 meta.deviceId（来源设备的 deviceId 已固化进 meta）。
+  // 切勿用传入的 deviceId 取分片：跨设备恢复后两者会错位，会读到错误/空/旧分片导致误报「数据损坏」。
   const aad = buildAAD({ vaultId: meta.vaultId, deviceId: meta.deviceId, schema: 1, kdf: meta.kdf });
   let dek;
   try {
@@ -54,7 +56,7 @@ export async function unlockVault(store, { masterPassword, recoveryCode, secretK
   } catch {
     throw new Error('E_UNLOCK');
   }
-  const records = await store.loadShard(deviceId);
+  const records = await store.loadShard(meta.deviceId);
   const v = verifyChain(records, {
     vaultId: meta.vaultId, deviceId: meta.deviceId, segment_id: meta.segment_id,
   });
@@ -109,7 +111,10 @@ export async function loadEntries(store, session) {
       latest.set(id, { ...pt, _seq: seq });
     }
   }
-  return [...latest.values()].map(({ _seq, ...rest }) => rest);
+  // 归一化：保证每条目都带 tags/fav/deleted 等基础字段，避免下游对
+  // 缺字段记录（如 tombstone 删除记录 {id,deleted:true}）调用 e.tags 时崩溃。
+  const base = { tags: [], fav: false, deleted: false };
+  return [...latest.values()].map(({ _seq, ...rest }) => ({ ...base, ...rest }));
 }
 
 // 编辑：强制带 id，append 一条新版本（哈希链连续递增）。旧版本仍留痕，解密时取最新。

@@ -330,20 +330,31 @@ async function unlock(){
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = '解密中…';
   try {
-    const r = await VaultCore.unlockVault(STORE, {
-      masterPassword: pw, deviceId: getDeviceId(),
-      ...(useCached ? { secretKey: cached } : { recoveryCode: rc }),
-    });
-    VAULT = { dek: r.dek, secretKey: r.secretKey, deviceId: getDeviceId(), vaultId: meta.vaultId };
-    if (!useCached){
-      // 手输恢复码解锁成功 → 重建便利副本（FR-K4 / §5 第 13 条）
-      try {
-        await VaultCore.saveSecretKey(meta.vaultId, r.secretKey);
-      } catch (e) {
-        const msg = '便利副本保存失败：' + (e.message || '未知错误') + '（下次仍需手输恢复码）';
-        toast(msg);
-        const h = $('#cv-hint'); if (h) h.textContent = msg;
+    let r;
+    try {
+      r = await VaultCore.unlockVault(STORE, {
+        masterPassword: pw, deviceId: getDeviceId(),
+        ...(useCached ? { secretKey: cached } : { recoveryCode: rc }),
+      });
+    } catch (e1) {
+      // 便利副本校验失败且用户手输了恢复码 → 用恢复码再试一次（覆盖损坏/错配的旧副本）
+      if (useCached && rc) {
+        r = await VaultCore.unlockVault(STORE, {
+          masterPassword: pw, deviceId: getDeviceId(), recoveryCode: rc,
+        });
+      } else {
+        throw e1;
       }
+    }
+    VAULT = { dek: r.dek, secretKey: r.secretKey, deviceId: getDeviceId(), vaultId: meta.vaultId };
+    // 无论走副本还是手输，只要解锁成功就重建便利副本（FR-K4 / §5 第 13 条），
+    // 用正确副本覆盖掉可能错配/损坏的旧副本，避免下次又被卡死
+    try {
+      await VaultCore.saveSecretKey(meta.vaultId, r.secretKey);
+    } catch (e) {
+      const msg = '便利副本保存失败：' + (e.message || '未知错误') + '（下次仍需手输恢复码）';
+      toast(msg);
+      const h = $('#cv-hint'); if (h) h.textContent = msg;
     }
     ENTRIES = await VaultCore.loadEntries(STORE, VAULT);
     const target = PENDING_VIEW || 'vault';
@@ -358,14 +369,27 @@ async function unlock(){
     await refreshVaultUI();
     toast('已解锁 · ' + ENTRIES.length + ' 条');
   } catch (e) {
-    // ADR-008：密码错 / 恢复码错 / 数据损坏统一文案，不区分
-    toast('无法解锁。主密码错误，或数据已损坏。');
-    // 用副本失败时自动展开恢复码框：副本损坏 / 换金库不至于把用户锁死
-    if (useCached){
+    // 开发原型：把真实错误码打到 console，便于定位（E_UNLOCK=密码/恢复码错，E_INTEGRITY_FAIL=哈希链损坏）
+    const code = (e && e.message) || 'E_UNKNOWN';
+    console.error('[vault] unlock failed:', code, e);
+    // 诊断文案：区分「便利副本错配」「数据完整性损坏」「密码/恢复码错」，不再笼统说「数据损坏」
+    let msg;
+    if (code === 'E_INTEGRITY_FAIL') {
+      msg = '数据完整性校验失败：记录哈希链不匹配，可能数据已损坏或来源不符';
+    } else if (useCached && !rc) {
+      msg = '本机便利副本校验失败，请在下方手动输入 26 位恢复码后重试';
+    } else {
+      msg = '无法解锁：主密码错误，或恢复码不匹配，或数据已损坏';
+    }
+    toast(msg);
+    // 副本失败 / 完整性失败时展开恢复码框，避免被锁死
+    if (useCached || code === 'E_INTEGRITY_FAIL') {
       const row = $('#recovery-row'); if (row) row.style.display = '';
       const alt = $('#recovery-alt'); if (alt) alt.style.display = 'none';
       const h = $('#lock-convenience-hint');
-      if (h) h.textContent = '如需改用其他恢复码，可在下方输入后重试';
+      if (h) h.textContent = (code === 'E_INTEGRITY_FAIL')
+        ? '数据完整性校验失败，建议重新从备份恢复'
+        : '便利副本校验失败，请在下方输入 26 位恢复码后重试';
     }
   } finally {
     btn.disabled = false; btn.textContent = orig;
@@ -385,7 +409,7 @@ function countByType(){
 }
 
 function tagCount(name){
-  return ENTRIES.filter(e => e.tags.includes(name)).length;
+  return ENTRIES.filter(e => (e.tags || []).includes(name)).length;
 }
 
 /* ── 左栏 ── */
@@ -428,10 +452,10 @@ function filtered(){
     if (e.deleted) return false;
     if (state.fav && !e.fav) return false;
     if (state.cat !== 'all' && e.type !== state.cat) return false;
-    if (state.tag && !e.tags.includes(state.tag)) return false;
+    if (state.tag && !(e.tags || []).includes(state.tag)) return false;
     if (state.q){
       const q = state.q.toLowerCase();
-      const hay = [e.title, e.user, e.url, ...e.tags].filter(Boolean).join(' ').toLowerCase();
+      const hay = [e.title, e.user, e.url, ...(e.tags || [])].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -2332,6 +2356,9 @@ $('#importmodal-ok')?.addEventListener('click', async () => {
     const r = await VaultCore.importBackup(STORE, PENDING_BACKUP, {
       masterPassword: pw, recoveryCode: rc,
     });
+    // 跨设备恢复后，把本机 deviceId 对齐到备份来源（备份 head 已固化来源 deviceId）。
+    // 否则 getDeviceId() 仍是本机随机 ID，会与新金库 meta.deviceId 错位，后续解锁/新增可能读到错误分片。
+    try { localStorage.setItem('vault.deviceId', r.meta.deviceId); } catch {}
     // ADR-015：恢复后建立本机便利副本，之后日常解锁只需主密码
     try {
       await VaultCore.saveSecretKey(r.meta.vaultId, r.secretKey);
