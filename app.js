@@ -658,6 +658,27 @@ function renderDetail(){
     return;
   }
 
+  // 回收站条目走独立渲染（③ §3.3）：tombstone 只有 {id,deleted:true}，
+  // 正常模板的 fields/hist/tags/... 任意一项缺失都会崩，且逐个补字段是打地鼠。
+  // 独立分支只显示必要信息 + 恢复/彻底删除，按钮属性沿用 bindDetail 的约定。
+  if (e.deleted){
+    box.innerHTML = `
+      <div class="detail-head">
+        <div class="mark-lg"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7h16M9 7V4.5h6V7M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg></div>
+        <div class="detail-title"><h1>${esc(e.title || '（已删除条目）')}</h1>
+          <span class="detail-url">此条目在回收站</span></div>
+        <div class="detail-actions">
+          <button class="btn ghost sm" data-restore="1">恢复</button>
+          <button class="btn danger sm" data-purge="1">彻底删除</button>
+        </div>
+      </div>
+      <div class="detail-body">
+        <div class="trash-banner">删除于 ${esc(e.deletedAt || '—')}。软删除不保留原内容，恢复后只剩条目骨架，彻底删除不可撤销。</div>
+      </div>`;
+    bindDetail(e);
+    return;
+  }
+
   box.innerHTML = `
     <div class="detail-head">
       <div class="mark-lg">${markChar(e)}</div>
@@ -917,7 +938,7 @@ function askPurge(id){
   if (!e) return;
   openConfirm({
     title: '彻底删除？',
-    body: '此操作不可撤销，且没有服务端可以恢复。「' + e.title + '」的字段、标签与历史会一起消失。',
+    body: '将从列表中移除此条目。注意：当前是追加式存储，「彻底删除」只是再写一条删除标记，**原内容与历史版本仍留在加密日志里**，从备份 / 远端恢复后它会重新出现。真正的物理擦除要到 M4（重写链 + 换密钥）。',
     okText: '彻底删除',
     danger: true,
     onOk: () => purgeEntry(id),
