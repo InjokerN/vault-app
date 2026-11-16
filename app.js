@@ -586,7 +586,6 @@ function renderList(){
   const list = sortEntries(filtered());
   $('#list-title').textContent = listTitle();
   $('#list-count').textContent = list.length;
-  $('#sb-count').textContent = `XChaCha20-Poly1305 · ${ENTRIES.length} 条`;
 
   $('#list-body').innerHTML = list.map(e => `
     <div class="row ${e.id === state.selected ? 'active' : ''}" data-id="${e.id}"${isMobile() ? '' : ' draggable="true"'}>
@@ -1834,7 +1833,7 @@ async function saveModal(){
     if (VAULT) await VaultCore.updateRecord(STORE, VAULT, { id: existing.id, plaintext: existing });
     closeModal();
     renderAll();
-    toast('已加密并写入分片', 'log-MAC-2F.enc');
+    toast('已加密并写入本机');
     return;
   }
 
@@ -1851,7 +1850,7 @@ async function saveModal(){
   renderRail();
   renderList();
   renderDetail();
-  toast('已加密并写入分片', 'log-MAC-2F.enc');
+  toast('已加密并写入本机');
   scheduleSync();   // FR-Y2：变更后 5s 防抖自动推备份
 }
 
@@ -2103,6 +2102,9 @@ function initMobilePWA(){
         });
       });
     }).catch(() => {});
+    // SW 真正接管页面后自动刷新「运行形态」卡片：
+    // 首次加载时 check 早于激活 → 显示「等待接管」，若不监听就永远停在旧文案（③ §3.3）
+    navigator.serviceWorker.addEventListener('controllerchange', () => updateRunMode());
   }
 
   let railPref = null;
@@ -2584,13 +2586,20 @@ function syncReady(){
   if (c.repo.split('/').length !== 2){ toast('数据仓格式应为 owner/repo'); return false; }
   return true;
 }
+// 最后同步时间：精确到「年-月-日 时:分」，持久化到 localStorage（刷新不丢），
+// 同时更新设置页与底部状态栏两处（规则 5：只显示真实发生的同步时间）。
+function fmtSyncTime(d){
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+    + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+function renderLastSync(text){
+  const el = $('#sync-last'); if (el) el.textContent = text;
+  const sb = $('#sb-last-sync'); if (sb) sb.textContent = text;
+}
 function markSyncedNow(){
-  const el = $('#sync-last');
-  if (el){
-    const d = new Date();
-    el.textContent = String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
-      + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-  }
+  const text = fmtSyncTime(new Date());
+  try { localStorage.setItem('vault.lastSync', text); } catch {}
+  renderLastSync(text);
 }
 
 $('#sync-test')?.addEventListener('click', async () => {
@@ -2706,6 +2715,8 @@ $('#sync-remember')?.addEventListener('change', () => {
 // （含 FR-SET2b 恢复入口），表现为「按钮在但点了没用」（③ §3.3、规则 6）。
 (function initSync(){
   try {
+    const last = localStorage.getItem('vault.lastSync');
+    renderLastSync(last || '尚未同步');
     const store = globalThis.VaultCore && VaultCore.patStore;
     const remembered = store ? store.load() : null;
     if (remembered && $('#sync-token') && !$('#sync-token').value){
