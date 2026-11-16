@@ -2096,7 +2096,8 @@ function initMobilePWA(){
 
 if (state.sort === 'manual' && !state.order) state.sort = 'time';
 
-initMobilePWA();
+try { initMobilePWA(); }
+catch (e) { console.error('[VAULT] PWA 初始化失败（不影响后续绑定）:', e && e.message); }
 
 /* M1 首次启动需等 window.VaultCore（module 加载）就绪后再初始化 */
 window.addEventListener('DOMContentLoaded', () => { void initApp(); });
@@ -2679,15 +2680,22 @@ $('#sync-remember')?.addEventListener('change', () => {
   if (pat) VaultCore.patStore.save(pat, { remember });
 });
 
-// 初始化：恢复记住的 PAT、自动推送调度器、状态显示
+// 初始化：恢复记住的 PAT、自动推送调度器、状态显示。
+// 必须 try/catch：本文件是单个经典脚本，此处抛错会中断其后所有事件绑定
+// （含 FR-SET2b 恢复入口），表现为「按钮在但点了没用」（③ §3.3、规则 6）。
 (function initSync(){
-  const remembered = VaultCore.patStore?.load();
-  if (remembered && $('#sync-token') && !$('#sync-token').value){
-    $('#sync-token').value = remembered;
-    if (VaultCore.patStore.hasRemembered() && $('#sync-remember')) $('#sync-remember').checked = true;
+  try {
+    const store = globalThis.VaultCore && VaultCore.patStore;
+    const remembered = store ? store.load() : null;
+    if (remembered && $('#sync-token') && !$('#sync-token').value){
+      $('#sync-token').value = remembered;
+      if (store.hasRemembered() && $('#sync-remember')) $('#sync-remember').checked = true;
+    }
+    ensureAutoPush();
+    setSyncState('idle');
+  } catch (e) {
+    console.error('[VAULT] 同步初始化失败（不影响解锁/恢复入口）:', e && e.message);
   }
-  ensureAutoPush();
-  setSyncState('idle');
 })();
 
 /* ── FR-SET2b：无金库态直接恢复（免走创建流程）──
