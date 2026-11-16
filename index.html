@@ -73,6 +73,13 @@
       <input id="setup-pass2" class="master-input" type="password" autocomplete="new-password" spellcheck="false" placeholder="再次输入">
       <div class="hint" id="setup-hint"></div>
       <button class="btn primary block" type="submit">创建保险库</button>
+      <div class="lock-restore" id="lock-restore">
+        <div class="ra-note">已有金库？不用重新创建</div>
+        <button type="button" class="btn ghost block" id="setup-restore-file">从备份文件恢复</button>
+        <button type="button" class="btn ghost block" id="setup-restore-remote">从 GitHub 远端恢复</button>
+        <div class="hint">恢复会还原原金库，需用原来的主密码与 26 位恢复码</div>
+      </div>
+      <input type="file" id="setup-backup-file" accept=".vaultenc,application/json" style="display:none">
     </form>
 
     <div id="setup-recovery-block" style="display:none; text-align:center">
@@ -528,6 +535,31 @@
   <div class="modal-foot">
     <button class="btn ghost" id="destroymodal-cancel">取消</button>
     <button class="btn danger" id="destroymodal-ok">永久销毁</button>
+  </div>
+</div>
+
+<!-- 无金库态从远端恢复（FR-SET2b）：先填数据仓 + PAT，再走 importmodal 填主密码/恢复码 -->
+<div class="modal-scrim" id="restoremote-scrim"></div>
+<div class="modal small" id="restoremote">
+  <div class="modal-head">
+    <h2>从 GitHub 远端恢复</h2>
+    <button class="icon-btn" id="restoremote-close" aria-label="关闭">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <div class="hint" style="margin-top:0">从你的私有数据仓拉取加密快照。下一步还需填主密码与 26 位恢复码。</div>
+    <label class="field-label" for="restore-repo" style="margin-top:12px">数据仓（owner/repo）</label>
+    <input id="restore-repo" class="input mono" placeholder="yourname/vault-data" spellcheck="false">
+    <label class="field-label" for="restore-branch" style="margin-top:10px">分支</label>
+    <input id="restore-branch" class="input mono" value="main" spellcheck="false">
+    <label class="field-label" for="restore-token" style="margin-top:10px">访问令牌（PAT）</label>
+    <input id="restore-token" class="input mono" type="password" placeholder="细粒度 PAT" autocomplete="off" spellcheck="false">
+    <div class="hint" id="restore-hint">令牌只用于本次拉取，不会写入本机存储。</div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="restoremote-cancel">取消</button>
+    <button class="btn primary" id="restoremote-ok">读取远端快照</button>
   </div>
 </div>
 
