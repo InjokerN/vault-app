@@ -111,9 +111,14 @@ export async function loadEntries(store, session) {
       latest.set(id, { ...pt, _seq: seq });
     }
   }
-  // 归一化：保证每条目都带 tags/fav/deleted 等基础字段，避免下游对
-  // 缺字段记录（如 tombstone 删除记录 {id,deleted:true}）调用 e.tags 时崩溃。
-  const base = { tags: [], fav: false, deleted: false };
+  // 归一化：补齐所有下游展示/操作所需字段。tombstone 落盘只有 {id,deleted:true}，
+  // 若不补齐，回收站列表的 title/type 与详情的 e.fields.map() 会崩，导致无法恢复/彻底删除。
+  // 写侧刻意只存最小化 tombstone（见 ② §4.6），展示字段在读模型这里补，避免重复写明文。
+  const base = {
+    tags: [], fav: false, deleted: false,
+    title: '（已删除条目）', type: 'deleted', fields: [], notes: '', url: '',
+    updated: '', user: '', idp: '',
+  };
   return [...latest.values()].map(({ _seq, ...rest }) => ({ ...base, ...rest }));
 }
 
