@@ -53,8 +53,7 @@ async function syncPush(store, session, config) {
 // 不在此处直接 pullSnapshot —— core 不擅自执行覆盖语义，覆盖前须 UI 二次确认。
 async function syncTest(config) {
   const remote = makeRemote(config);
-  await remote.listFiles('vault'); // 能列目录即认证+权限通过
-  return true;
+  return remote.checkAccess(); // 验仓库可达 + 权限，空仓也通过（不依赖目录/分支存在）
 }
 async function syncFetch(config) {
   const remote = makeRemote(config);

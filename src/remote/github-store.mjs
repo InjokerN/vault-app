@@ -75,6 +75,35 @@ export class GitHubRemoteStore {
     return res.json();
   }
 
+  // 连通性测试：只验仓库可达 + 凭据有权限。空仓（size=0、无分支）也返回 200。
+  // 不用 contents 端点——新仓目录不存在会 404，把「还没推送过」误报成失败。
+  async checkAccess() {
+    const url = `${API}/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    let res;
+    try {
+      res = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${this.token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+    } catch {
+      throw new Error(REMOTE_ERRORS.NETWORK);
+    }
+    if (!res.ok) {
+      // 私有仓无权访问时 GitHub 返回 404（不泄露仓库是否存在），须当作认证失败
+      const code = res.status === 404 ? REMOTE_ERRORS.AUTH : mapHttpError(res.status);
+      const err = new Error(code);
+      err.status = res.status;
+      throw err;
+    }
+    const data = await res.json();
+    if (!data || !data.full_name) throw new Error(REMOTE_ERRORS.UNKNOWN);
+    return { fullName: data.full_name, private: !!data.private, size: data.size, defaultBranch: data.default_branch };
+  }
+
   async listFiles(prefix = '') {
     assertRemoteStore(this);
     const data = await this._req(prefix);
@@ -121,6 +150,16 @@ export function makeFakeFetch(files = new Map(), { failStatus = null } = {}) {
   return async (url, opts = {}) => {
     if (failStatus) return { ok: false, status: failStatus, json: async () => ({}) };
     const u = new URL(url);
+    // 仓库元数据端点（checkAccess 用）：/repos/{owner}/{repo}，无 /contents/ 段
+    if (!u.pathname.includes('/contents/')) {
+      const parts = u.pathname.split('/').filter(Boolean);
+      const repo = parts[parts.length - 1];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ full_name: 'u/' + repo, private: true, size: 0, default_branch: 'main' }),
+      };
+    }
     // 去掉 /contents/ 前缀与 query
     const path = decodeURIComponent(u.pathname.split('/contents/')[1] || '');
     const method = opts.method || 'GET';

@@ -7,6 +7,7 @@
 //   listFiles(prefix)        -> Promise<string[]>             列出前缀下的文件路径
 //   readFile(path)           -> Promise<{content, sha}>       读文件（content 为 base64 字符串）
 //   writeFile(path, content, sha?) -> Promise<{sha}>          写文件；sha 为乐观锁（可选）
+//   checkAccess()            -> Promise<boolean>               验仓库可达 + 凭据有权限（不依赖目录/分支存在）
 //   deleteFile(path, sha?)   -> Promise<void>                 删文件（M3-B 归档用，阶段一可空实现）
 //
 // 统一错误码（各实现必须映射到此表，UI 据此显示文案）：
