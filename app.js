@@ -2382,9 +2382,12 @@ $('#importmodal-ok')?.addEventListener('click', async () => {
     closeImportModal();
     showUnlockForm();                    // 复位表单：从「创建态」恢复后必须切回解锁页，否则残留创建表单看似空库
     await refreshLockUI();
+    // 条目数用去重后的当前条目数，不用 r.count（那是日志版本数，含旧版本/tombstone）
+    let shown = r.count;
+    try { shown = (await VaultCore.loadEntries(STORE, { dek: r.dek })).length; } catch {}
     // 远端恢复成功 → 同步状态置 clean 并记时间（本地文件恢复同样适用，无副作用）
     try { markSyncedNow(); setSyncState('clean'); } catch {}
-    toast('恢复完成 · ' + r.count + ' 条记录，请用主密码解锁');
+    toast('恢复完成 · ' + shown + ' 条，请用主密码解锁');
   } catch (e) {
     hint.textContent = '恢复失败：' + backupError(e) + '（本机数据未改动）';
   } finally {
@@ -2686,3 +2689,67 @@ $('#sync-remember')?.addEventListener('change', () => {
   ensureAutoPush();
   setSyncState('idle');
 })();
+
+/* ── FR-SET2b：无金库态直接恢复（免走创建流程）──
+   复用既有 importmodal（主密码 + 恢复码 + 整库覆盖确认），恢复成功后由
+   importmodal-ok 统一 showUnlockForm()。两条来源：本地备份文件 / GitHub 远端。 */
+function openImportWith(snapshot, label){
+  PENDING_BACKUP = snapshot;
+  $('#import-file-name').textContent = label;
+  $('#import-pass').value = '';
+  $('#import-recovery').value = '';
+  $('#import-hint').textContent = '';
+  $('#importmodal-scrim').classList.add('on');
+  $('#importmodal').classList.add('on');
+  setTimeout(() => $('#import-pass')?.focus(), 50);
+}
+
+$('#setup-restore-file')?.addEventListener('click', () => $('#setup-backup-file')?.click());
+$('#setup-backup-file')?.addEventListener('change', async ev => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!f) return;
+  try {
+    openImportWith(JSON.parse(await f.text()), f.name + ' · ' + (f.size/1024).toFixed(1) + ' KB');
+  } catch (e) {
+    toast('备份文件不是有效 JSON：' + ((e && e.message) || '未知错误'));
+  }
+});
+
+function closeRestoreRemote(){
+  $('#restoremote-scrim').classList.remove('on');
+  $('#restoremote').classList.remove('on');
+  $('#restore-hint').textContent = '';
+}
+$('#setup-restore-remote')?.addEventListener('click', () => {
+  // 预填记住的 PAT / 上次数据仓（若存在）
+  const remembered = VaultCore.patStore?.load();
+  if (remembered && $('#restore-token')) $('#restore-token').value = remembered;
+  $('#restoremote-scrim').classList.add('on');
+  $('#restoremote').classList.add('on');
+  setTimeout(() => $('#restore-repo')?.focus(), 50);
+});
+$('#restoremote-close')?.addEventListener('click', closeRestoreRemote);
+$('#restoremote-cancel')?.addEventListener('click', closeRestoreRemote);
+$('#restoremote-scrim')?.addEventListener('click', closeRestoreRemote);
+$('#restoremote-ok')?.addEventListener('click', async () => {
+  const repo = ($('#restore-repo')?.value || '').trim();
+  const branch = ($('#restore-branch')?.value || 'main').trim() || 'main';
+  const token = ($('#restore-token')?.value || '').trim();
+  const hint = $('#restore-hint');
+  if (repo.split('/').length !== 2){ hint.textContent = '数据仓格式应为 owner/repo'; return; }
+  if (!token){ hint.textContent = '请输入访问令牌（PAT）'; return; }
+  const btn = $('#restoremote-ok'); const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '读取远端…';
+  try {
+    const snap = await VaultCore.syncFetch({ repo, branch, token });
+    if (!snap) throw new Error('E_NO_SNAPSHOT');
+    closeRestoreRemote();
+    openImportWith(snap, '远端快照 · vault/snapshot.vaultenc');
+  } catch (e) {
+    const code = (e && e.message) || '未知错误';
+    hint.textContent = code === 'E_AUTH' ? 'PAT 无效或权限不足'
+      : code === 'E_NOT_FOUND' ? '远端没有快照（尚未推送过）'
+      : '读取失败：' + code;
+  } finally { btn.disabled = false; btn.textContent = orig; }
+});
