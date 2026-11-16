@@ -893,6 +893,7 @@ async function trashEntry(id){
   if (VAULT) await VaultCore.deleteRecord(STORE, VAULT, { id });
   renderAll();
   toast('已移入回收站', '可恢复');
+  scheduleSync();
 }
 
 async function restoreEntry(id){
@@ -908,6 +909,7 @@ async function restoreEntry(id){
   if (VAULT) await VaultCore.updateRecord(STORE, VAULT, { id, plaintext: e });
   renderAll();
   toast('已恢复', e.title);
+  scheduleSync();
 }
 
 function askPurge(id){
@@ -934,6 +936,7 @@ async function purgeEntry(id){
   }
   renderAll();
   toast('已彻底删除（分片物理擦除待 M4）', '不可恢复');
+  scheduleSync();
 }
 
 /* ── 标签：加/减 ── */
@@ -1828,11 +1831,10 @@ async function saveModal(){
   renderList();
   renderDetail();
   toast('已加密并写入分片', 'log-MAC-2F.enc');
+  scheduleSync();   // FR-Y2：变更后 5s 防抖自动推备份
 }
 
 $('#modal-save').addEventListener('click', saveModal);
-
-$('#sync-state').addEventListener('click', () => toast('干净 · 与远端一致','12:04'));
 
 /* 排序控件 */
 $('#btn-sort').addEventListener('click', ev => {
@@ -2371,6 +2373,8 @@ $('#importmodal-ok')?.addEventListener('click', async () => {
     closeImportModal();
     setView('unlock');
     await refreshLockUI();
+    // 远端恢复成功 → 同步状态置 clean 并记时间（本地文件恢复同样适用，无副作用）
+    try { markSyncedNow(); setSyncState('clean'); } catch {}
     toast('恢复完成 · ' + r.count + ' 条记录，请用主密码解锁');
   } catch (e) {
     hint.textContent = '恢复失败：' + backupError(e) + '（本机数据未改动）';
@@ -2446,7 +2450,230 @@ $('#rotatemodal-ok')?.addEventListener('click', async () => {
   }
 });
 
-// FR-SET4（P1）尚未实现：不假装可用，点按明确告知（规则 5 / 规则 6）
+/* ── FR-SET4：销毁本地金库（两道闸 + 校验后清） ──
+   规格：① 2.9 / ② §3「销毁本地金库」/ ③ §3.3。失败要吵、不假装全清（规则 5/6）。 */
+function openDestroyModal(){
+  $('#destroy-pass').value = '';
+  $('#destroy-hint').textContent = '';
+  $('#destroymodal-scrim').classList.add('on');
+  $('#destroymodal').classList.add('on');
+  setTimeout(() => $('#destroy-pass')?.focus(), 50);
+}
+function closeDestroyModal(){
+  $('#destroy-pass').value = '';
+  $('#destroy-hint').textContent = '';
+  $('#destroymodal-scrim').classList.remove('on');
+  $('#destroymodal').classList.remove('on');
+}
 $('#destroy-vault')?.addEventListener('click', () => {
-  toast('销毁本地金库尚未实现（FR-SET4 / P1）');
+  if (!VAULT){ toast('请先解锁金库再销毁'); return; }
+  openConfirm({
+    title: '销毁本地金库',
+    body: '此操作不可撤销，没有服务端可以恢复。本机全部条目、便利副本与界面偏好会被永久删除。已下载的备份文件与远端仓库不受影响。请确认你仍留有恢复码或备份。',
+    okText: '我已了解，继续',
+    danger: true,
+    onOk: () => openDestroyModal(),
+  });
 });
+$('#destroymodal-close')?.addEventListener('click', closeDestroyModal);
+$('#destroymodal-cancel')?.addEventListener('click', closeDestroyModal);
+$('#destroymodal-scrim')?.addEventListener('click', closeDestroyModal);
+$('#destroymodal-ok')?.addEventListener('click', async () => {
+  if (!VAULT){ closeDestroyModal(); toast('请先解锁金库再销毁'); return; }
+  const btn = $('#destroymodal-ok');
+  const hint = $('#destroy-hint');
+  const pw = $('#destroy-pass').value;
+  if (!pw){ hint.textContent = '请输入当前主密码'; return; }
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '校验中…';
+  try {
+    const r = await VaultCore.destroyVault(STORE, VAULT, pw);
+    // core 已 lock(session) 清掉 DEK / Secret Key；这里清应用层会话与 UI
+    VAULT = null;
+    ENTRIES = [];
+    PENDING_VIEW = null;
+    state.cat = 'all'; state.tag = null; state.q = '';
+    closeDestroyModal();
+    setView('unlock');
+    await refreshLockUI();
+    if (r.ok) {
+      toast('本机金库已销毁 · 可用备份或恢复码重新建立');
+    } else {
+      const names = r.errors.map(x => x.item).join('、');
+      toast('金库已销毁，但部分数据清除失败（' + names + '），请手动检查');
+    }
+  } catch (e) {
+    const code = (e && e.message) || '未知错误';
+    hint.textContent = code === 'E_UNLOCK'
+      ? '主密码错误，本机数据未改动'
+      : '销毁失败（' + code + '），本机数据未改动';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+
+/* ── M3-A 远端备份兜底（阶段一）──
+   规格：④ M3-A、FR-Y1/Y2/Y5/Y9/Y11。状态机只如实显示真实状态（规则 5）。
+   推送 = 整库密文快照；拉取复用 importmodal 的主密码+恢复码与整库覆盖流程。 */
+let SYNC_STATE = 'idle';   // idle | pending | clean | offline | error
+let SYNC_DEBOUNCER = null;
+
+function syncConfig(){
+  return {
+    repo: ($('#sync-repo')?.value || '').trim(),
+    branch: ($('#sync-branch')?.value || 'main').trim() || 'main',
+    token: ($('#sync-token')?.value || '').trim(),
+  };
+}
+function setSyncState(state, detail){
+  SYNC_STATE = state;
+  const dot = $('#sync-dot');
+  const label = $('#sync-status');
+  if (dot){
+    dot.classList.remove('ok','warn','off');
+    if (state === 'clean') dot.classList.add('ok');
+    else if (state === 'pending' || state === 'error') dot.classList.add('warn');
+    else dot.classList.add('off');
+  }
+  const text = {
+    idle: '未配置', pending: '待推送', clean: '已同步',
+    offline: '离线', error: '同步失败',
+  }[state] || state;
+  if (label) label.textContent = detail ? text + ' · ' + detail : text;
+  const btn = $('#sync-state');
+  if (btn) btn.setAttribute('aria-label', '同步状态：' + (label?.textContent || text));
+}
+function syncReady(){
+  const c = syncConfig();
+  if (!c.repo || !c.token){ toast('请先填写数据仓（owner/repo）与 PAT'); return false; }
+  if (c.repo.split('/').length !== 2){ toast('数据仓格式应为 owner/repo'); return false; }
+  return true;
+}
+function markSyncedNow(){
+  const el = $('#sync-last');
+  if (el){
+    const d = new Date();
+    el.textContent = String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+      + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  }
+}
+
+$('#sync-test')?.addEventListener('click', async () => {
+  if (!syncReady()) return;
+  const btn = $('#sync-test'); const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '测试中…';
+  try {
+    await VaultCore.syncTest(syncConfig());
+    setSyncState(SYNC_STATE === 'error' ? 'error' : 'clean', '连通');
+    toast('连通正常 · 有 contents 读写权限');
+  } catch (e) {
+    setSyncState('error');
+    toast('连通失败：' + ((e && e.message) || '未知错误'));
+  } finally { btn.disabled = false; btn.textContent = orig; }
+});
+
+async function doSyncPush(){
+  if (!VAULT || !STORE) return;
+  try {
+    setSyncState('pending');
+    const r = await VaultCore.syncPush(STORE, VAULT, syncConfig());
+    markSyncedNow();
+    setSyncState('clean');
+    return r;
+  } catch (e) {
+    setSyncState('error');
+    const code = (e && e.message) || '未知错误';
+    if (code === 'E_AUTH') toast('PAT 无效或权限不足，本机数据未改动');
+    else if (code === 'E_NETWORK') toast('网络不可用，待推送数据已保留在本机');
+    else toast('推送失败（' + code + '），本机数据未改动');
+    return null;
+  }
+}
+
+$('#sync-push')?.addEventListener('click', async () => {
+  if (!VAULT){ toast('请先解锁金库再推送'); return; }
+  if (!syncReady()) return;
+  const btn = $('#sync-push'); const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '推送中…';
+  try {
+    const r = await doSyncPush();
+    if (r) toast('备份已推送 · ' + (r.bytes/1024).toFixed(1) + ' KB');
+  } finally { btn.disabled = false; btn.textContent = orig; }
+});
+
+// 变更后 5s 防抖自动推（FR-Y2）。只在本机有会话且已配 PAT 时注册。
+function ensureAutoPush(){
+  if (SYNC_DEBOUNCER) return;
+  SYNC_DEBOUNCER = VaultCore.createDebouncer(async () => {
+    const c = syncConfig();
+    if (!VAULT || !c.repo || !c.token) return;   // 未配置则静默跳过，不报错
+    await doSyncPush();
+  }, 5000);
+}
+// 所有写操作成功后调用：未配置同步时 trigger 也是空转（debouncer 内判断），无副作用。
+function scheduleSync(){
+  ensureAutoPush();
+  SYNC_DEBOUNCER?.trigger();
+}
+
+$('#sync-pull')?.addEventListener('click', () => {
+  if (!syncReady()) return;
+  openConfirm({
+    title: '从远端恢复金库',
+    body: '远端密文快照会整库覆盖本机现有数据，覆盖不可撤销。恢复需要该金库的主密码与 26 位恢复码。请确认你已导出本机现有数据的备份。',
+    okText: '我已了解，继续',
+    danger: true,
+    onOk: async () => {
+      const btn = $('#sync-pull');
+      btn.disabled = true; btn.textContent = '读取远端…';
+      try {
+        // 先取远端快照，校验摘要/格式后塞进 importmodal，由用户填主密码+恢复码并最终确认覆盖
+        const snap = await VaultCore.syncFetch(syncConfig());
+        if (!snap) throw new Error('E_NO_FETCH');
+        PENDING_BACKUP = snap;
+        $('#import-file-name').textContent = '远端快照 · vault/snapshot.vaultenc';
+        $('#import-pass').value = '';
+        $('#import-recovery').value = '';
+        $('#import-hint').textContent = '';
+        $('#importmodal-scrim').classList.add('on');
+        $('#importmodal').classList.add('on');
+        setTimeout(() => $('#import-pass')?.focus(), 50);
+      } catch (e) {
+        toast('读取远端失败：' + ((e && e.message) || '未知错误'));
+      } finally { btn.disabled = false; btn.textContent = '从远端恢复'; }
+    },
+  });
+});
+
+// 同步状态按钮：显示真实状态说明（替换原假 toast）
+$('#sync-state')?.addEventListener('click', () => {
+  const msg = {
+    idle: '尚未配置同步', pending: '有改动待推送', clean: '已与远端一致',
+    offline: '离线', error: '上次同步失败，数据仍在本机',
+  }[SYNC_STATE] || SYNC_STATE;
+  toast(msg);
+});
+
+// 记住此设备：显式勾选才持久化 PAT（FR-Y11）
+$('#sync-token')?.addEventListener('input', () => {
+  const remember = !!($('#sync-remember')?.checked);
+  const pat = ($('#sync-token')?.value || '').trim();
+  if (pat) VaultCore.patStore.save(pat, { remember });
+});
+$('#sync-remember')?.addEventListener('change', () => {
+  const remember = !!($('#sync-remember')?.checked);
+  const pat = ($('#sync-token')?.value || '').trim();
+  if (pat) VaultCore.patStore.save(pat, { remember });
+});
+
+// 初始化：恢复记住的 PAT、自动推送调度器、状态显示
+(function initSync(){
+  const remembered = VaultCore.patStore?.load();
+  if (remembered && $('#sync-token') && !$('#sync-token').value){
+    $('#sync-token').value = remembered;
+    if (VaultCore.patStore.hasRemembered() && $('#sync-remember')) $('#sync-remember').checked = true;
+  }
+  ensureAutoPush();
+  setSyncState('idle');
+})();

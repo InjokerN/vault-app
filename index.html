@@ -219,28 +219,33 @@
       <h1 class="settings-title">设置</h1>
 
       <section class="sgroup">
-        <h2 class="sgroup-title">GitHub 同步</h2>
-        <p class="sgroup-desc">加密分片推送到你的私有仓库。主密码与金库密钥永不离开本机。</p>
+        <h2 class="sgroup-title">GitHub 同步 · 远端备份</h2>
+        <p class="sgroup-desc">整库密文快照推到你的私有数据仓。本地数据被清除时可从这里整库拉回。主密码与金库密钥永不离开本机。</p>
 
         <div class="sfield">
-          <label class="field-label">仓库</label>
-          <input class="input mono" value="yg/vault" spellcheck="false">
+          <label class="field-label">数据仓（owner/repo）</label>
+          <input class="input mono" id="sync-repo" placeholder="yourname/vault-data" spellcheck="false">
+          <div class="hint">专用私有仓，只授权 <span class="mono">contents: read/write</span>；不要与源码仓混用</div>
         </div>
         <div class="sfield">
           <label class="field-label">分支</label>
-          <input class="input mono" value="main" spellcheck="false">
+          <input class="input mono" id="sync-branch" value="main" spellcheck="false">
         </div>
         <div class="sfield">
-          <label class="field-label">访问令牌</label>
-          <input class="input mono" type="password" value="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" spellcheck="false">
-          <div class="hint">细粒度 PAT，仅授权该仓库 <span class="mono">contents: read/write</span></div>
+          <label class="field-label">访问令牌（PAT）</label>
+          <input class="input mono" id="sync-token" type="password" placeholder="细粒度 PAT" autocomplete="off" spellcheck="false">
+          <div class="hint" id="sync-token-hint">默认只存到关闭本标签页为止。主密码与金库密钥永不离开本机。</div>
+          <label class="checkline"><input type="checkbox" id="sync-remember"> 记住此设备（PAT 存入本机浏览器存储）</label>
+          <div class="hint" style="color:var(--danger)">勾选有风险：同源的其他网页可能读到该 PAT。仅在专用设备 / 专用账号下勾选。</div>
         </div>
 
         <div class="srow srow-btns">
-          <button class="btn ">连通性测试</button>
-          <button class="btn ghost">立即推送</button>
+          <button class="btn" id="sync-test">连通性测试</button>
+          <button class="btn ghost" id="sync-push">立即推送备份</button>
+          <button class="btn ghost" id="sync-pull">从远端恢复</button>
         </div>
-        <div class="srow-note below"><span>上次同步时间 <span class="mono">11-06 12:04</span></span><span><i class="dot ok"></i>状态 干净</span></div>
+        <div class="srow-note below"><span>上次同步 <span class="mono" id="sync-last">—</span></span><span><i class="dot ok" id="sync-dot"></i><span id="sync-status">未配置</span></span></div>
+        <div class="hint" id="sync-hint" style="margin-top:8px">「从远端恢复」会整库覆盖本机现有数据，须二次确认。恢复需主密码与该金库的 26 位恢复码。</div>
       </section>
 
       <section class="sgroup">
@@ -501,6 +506,28 @@
   <div class="modal-foot">
     <button class="btn ghost" id="confirm-cancel">取消</button>
     <button class="btn danger" id="confirm-ok">确认</button>
+  </div>
+</div>
+
+<!-- 销毁本地金库（FR-SET4）：第二道闸——输入当前主密码，先验后删 -->
+<div class="modal-scrim" id="destroymodal-scrim"></div>
+<div class="modal small" id="destroymodal">
+  <div class="modal-head">
+    <h2>销毁本地金库</h2>
+    <button class="icon-btn" id="destroymodal-close" aria-label="关闭">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <div class="hint" style="margin-top:0;color:var(--danger)">此操作不可撤销，没有服务端可以恢复。本机全部条目、便利副本与界面偏好将被永久删除。</div>
+    <div class="hint">已下载的 <span class="mono">.vaultenc</span> 备份文件不会被删除；也可用「主密码 + 26 位恢复码」重新建立金库。</div>
+    <label class="field-label" for="destroy-pass" style="margin-top:14px">当前主密码</label>
+    <input id="destroy-pass" class="master-input" type="password" autocomplete="off" spellcheck="false" placeholder="输入主密码以确认销毁">
+    <div class="hint" id="destroy-hint"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="destroymodal-cancel">取消</button>
+    <button class="btn danger" id="destroymodal-ok">永久销毁</button>
   </div>
 </div>
 

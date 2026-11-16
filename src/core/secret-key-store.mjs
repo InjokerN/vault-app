@@ -58,3 +58,8 @@ export async function clearSecretKey(vaultId) {
   if (!vaultId) return;
   await run('readwrite', s => s.delete(vaultId));
 }
+
+// FR-SET4：销毁本地金库时清空本应用全部便利副本（整个 object store）。
+export async function clearAllSecretKeys() {
+  await run('readwrite', s => s.clear());
+}
