@@ -251,12 +251,20 @@
       </section>
 
       <section class="sgroup">
-        <h2 class="sgroup-title">加密</h2>
-        <div class="kv-list">
-          <div class="kv"><span>密钥派生</span><span class="mono">Argon2id</span></div>
-          <div class="kv"><span>内存 / 迭代 / 并行</span><span class="mono" id="vault-kdf">—</span></div>
-          <div class="kv"><span>记录加密</span><span class="mono">XChaCha20-Poly1305</span></div>
-          <div class="kv"><span>金库指纹</span><span class="mono" id="vault-fingerprint">—</span></div>
+        <h2 class="sgroup-title">备份与恢复</h2>
+        <div class="srow srow-btns">
+          <button class="btn ghost" id="backup-export">导出加密备份</button>
+          <button class="btn ghost" id="backup-import">从备份恢复</button>
+        </div>
+        <div class="hint" style="margin-top:8px">备份不含恢复码；恢复时仍需主密码与该金库的 26 位恢复码。</div>
+        <input type="file" id="backup-file" accept=".vaultenc,application/json" style="display:none">
+      </section>
+
+      <section class="sgroup danger-group">
+        <h2 class="sgroup-title">危险操作</h2>
+        <div class="srow srow-btns">
+          <button class="btn ghost" id="rotate-recovery">重新生成恢复码</button>
+          <button class="btn danger-ghost" id="destroy-vault">销毁本地金库</button>
         </div>
       </section>
 
@@ -277,21 +285,21 @@
         <div class="hint" id="cv-hint"></div>
       </section>
 
-      <section class="sgroup">
-        <h2 class="sgroup-title">备份与恢复</h2>
-        <div class="srow srow-btns">
-          <button class="btn ghost" id="backup-export">导出加密备份</button>
-          <button class="btn ghost" id="backup-import">从备份恢复</button>
-        </div>
-        <div class="hint" style="margin-top:8px">备份不含恢复码；恢复时仍需主密码与该金库的 26 位恢复码（Q11 / ADR-022）。</div>
-        <input type="file" id="backup-file" accept=".vaultenc,application/json" style="display:none">
+      <section class="sgroup" id="runmode-group">
+        <h2 class="sgroup-title">运行形态</h2>
+        <div class="srow"><span>独立模式（PWA）</span><b id="rm-standalone">—</b></div>
+        <div class="srow"><span>Service Worker</span><b id="rm-sw">—</b></div>
+        <div class="srow"><span>可安装</span><b id="rm-install">—</b></div>
+        <div class="srow"><span>离线缓存</span><b id="rm-cache">仅 UI shell</b></div>
       </section>
 
-      <section class="sgroup danger-group">
-        <h2 class="sgroup-title">危险操作</h2>
-        <div class="srow srow-btns">
-          <button class="btn ghost" id="rotate-recovery">重新生成恢复码</button>
-          <button class="btn danger-ghost" id="destroy-vault">销毁本地金库</button>
+      <section class="sgroup">
+        <h2 class="sgroup-title">加密</h2>
+        <div class="kv-list">
+          <div class="kv"><span>密钥派生</span><span class="mono">Argon2id</span></div>
+          <div class="kv"><span>内存 / 迭代 / 并行</span><span class="mono" id="vault-kdf">—</span></div>
+          <div class="kv"><span>记录加密</span><span class="mono">XChaCha20-Poly1305</span></div>
+          <div class="kv"><span>金库指纹</span><span class="mono" id="vault-fingerprint">—</span></div>
         </div>
       </section>
     </div>
@@ -320,19 +328,19 @@
     </div>
 
     <div class="sfield">
-      <label class="field-label">类型 · 决定字段结构（FR-E8）</label>
+      <label class="field-label">类型</label>
       <div class="seg" id="type-seg"></div>
     </div>
 
     <div class="sfield" id="method-field">
-      <label class="field-label">登录方式（FR-E9）</label>
+      <label class="field-label">登录方式</label>
       <div class="seg" id="method-seg"></div>
       <div class="idp-pick" id="idp-pick"></div>
     </div>
 
     <div class="sfield">
       <div class="label-row">
-        <label class="field-label">字段 · k / v 可增删（FR-E2）</label>
+        <label class="field-label">字段</label>
         <button type="button" class="mini" id="add-field">＋ 添加字段</button>
       </div>
       <div class="field-list" id="field-list" data-scope="entry"></div>
@@ -344,7 +352,7 @@
     </div>
 
     <div class="sfield">
-      <label class="field-label">标签 · 归属只存在条目上（ADR-012）</label>
+      <label class="field-label">标签</label>
       <div class="tag-row" id="modal-tags"></div>
     </div>
 
@@ -483,7 +491,6 @@
   </div>
 </div>
 
-<!-- 销毁本地金库（FR-SET4）：第二道闸——输入当前主密码，先验后删 -->
 <div class="modal-scrim" id="destroymodal-scrim"></div>
 <div class="modal small" id="destroymodal">
   <div class="modal-head">
@@ -505,7 +512,6 @@
   </div>
 </div>
 
-<!-- 无金库态从远端恢复（FR-SET2b）：先填数据仓 + PAT，再走 importmodal 填主密码/恢复码 -->
 <div class="modal-scrim" id="restoremote-scrim"></div>
 <div class="modal small" id="restoremote">
   <div class="modal-head">
@@ -530,7 +536,6 @@
   </div>
 </div>
 
-<!-- 从加密备份恢复（FR-SET3 / ADR-020）：整库覆盖，须先二次告知后果 -->
 <div class="modal-scrim" id="importmodal-scrim"></div>
 <div class="modal" id="importmodal">
   <div class="modal-head">
@@ -554,7 +559,6 @@
   </div>
 </div>
 
-<!-- 重新生成恢复码（FR-K5）：两步——先验主密码，再展示新码要求手抄 -->
 <div class="modal-scrim" id="rotatemodal-scrim"></div>
 <div class="modal" id="rotatemodal">
   <div class="modal-head">
