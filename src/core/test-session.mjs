@@ -57,3 +57,18 @@ try {
   await unlockVault(store, { masterPassword: MP, recoveryCode: '00000000000000000000000000', deviceId: 'd1' });
   console.log('错误恢复码检测: FAIL ❌');
 } catch (e) { console.log('错误恢复码检测: OK ✅', e.message); }
+
+// tombstone 归一化（2026-11-16）：软删除条目只有 {id,deleted:true}，
+// loadEntries 必须补齐 title/type/fields，否则回收站详情的 e.fields.map 会崩。
+{
+  const ts = new MemStore();
+  const { session: s2 } = await setupVault(ts, { masterPassword: MP, vaultId: 'v1', deviceId: 'd1' });
+  await addRecord(ts, s2, { plaintext: { id: 'gone', title: 'Secret', type: 'login', fields: [{ k: '密码', v: 'x' }] } });
+  await deleteRecord(ts, s2, { id: 'gone' });
+  const list = await loadEntries(ts, s2);
+  const t = list.find(e => e.id === 'gone');
+  console.log('tombstone 存在且标记 deleted:', !!t && t.deleted === true);
+  console.log('tombstone 有 title/type:', typeof t.title === 'string' && t.title.length > 0 && !!t.type);
+  console.log('tombstone.fields 可 map:', Array.isArray(t.fields) && t.fields.map(f => f.k).length === 0);
+  console.log('tombstone 原始明文未落盘:', !JSON.stringify((await ts.loadShard('d1'))[1].ciphertext).includes('Secret'));
+}
