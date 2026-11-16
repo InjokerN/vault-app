@@ -1148,7 +1148,7 @@ function renderIdpPick(){
   if (d.type !== 'login' || d.loginMethod !== 'oauth'){ box.innerHTML = ''; return; }
   const idps = ENTRIES.filter(x => x.type === 'account');
   box.innerHTML = idps.length
-    ? `<label class="field-label">引用身份账户 · 决定反向索引（FR-E10）</label>
+    ? `<label class="field-label">引用身份账户</label>
        <select id="new-idp">${idps.map(x =>
          `<option value="${x.id}" ${d.idp === x.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`
     : `<div class="none">还没有「身份账户」条目。先建一条，再回来引用它。</div>`;
@@ -1755,7 +1755,7 @@ $('#modal').addEventListener('click', ev => {
     d.idp = null;
     d.fields = fieldsFor(d.type, d.loginMethod);
     renderModalEditor();
-    $('#modal-hint').textContent = '已切换类型：字段列表按该类型默认结构重置（类型决定字段结构，FR-E8）';
+    $('#modal-hint').textContent = '已切换类型：字段列表按该类型默认结构重置';
     return;
   }
   if (btn.dataset.method){
@@ -1988,19 +1988,6 @@ function setSearchKbd(){
   kbd.textContent = mac ? '⌘K' : 'Ctrl K';
 }
 
-function buildRunModeCard(){
-  const inner = document.querySelector('.settings-inner');
-  if (!inner || document.getElementById('runmode-group')) return;
-  inner.insertAdjacentHTML('beforeend', `
-    <section class="sgroup" id="runmode-group">
-      <h2 class="sgroup-title">运行形态</h2>
-      <p class="sgroup-desc">不是「已安装」就不该显示「已安装」。</p>
-      <div class="srow"><span>独立模式（PWA）</span><b id="rm-standalone">—</b></div>
-      <div class="srow"><span>Service Worker</span><b id="rm-sw">—</b></div>
-      <div class="srow"><span>可安装</span><b id="rm-install">—</b></div>
-      <div class="srow"><span>离线缓存</span><b id="rm-cache">仅 UI shell</b></div>
-    </section>`);
-}
 
 function updateRunMode(){
   const st = isStandalone();
@@ -2112,7 +2099,6 @@ function initMobilePWA(){
   setRailOpen(railPref === '1', false);
   setSearchKbd();
 
-  buildRunModeCard();
   updateRunMode();
   setPane('list');
 }
@@ -2168,7 +2154,7 @@ function showSetup(){
 async function doSetup(){
   const pw = $('#setup-pass').value;
   const pw2 = $('#setup-pass2').value;
-  if (pw.length < 16){ $('#setup-hint').textContent = '主密码至少 16 字符（Q3-B）'; return; }
+  if (pw.length < 16){ $('#setup-hint').textContent = '主密码至少 16 字符'; return; }
   if (pw !== pw2){ $('#setup-hint').textContent = '两次输入不一致'; return; }
   const r = await VaultCore.setupVault(STORE, { masterPassword: pw, deviceId: getDeviceId() });
   VAULT = { dek: r.session.dek, secretKey: r.session.secretKey, deviceId: getDeviceId(), vaultId: r.meta.vaultId, recoveryCode: r.recoveryCode };
