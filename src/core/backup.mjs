@@ -15,7 +15,7 @@ import {
   deriveRawKey, deriveKEK, wrapDEK, unwrapDEK,
   generateSecretKey, secretKeyToBase32, base32ToSecretKey,
 } from './keys.mjs';
-import { verifyChain, bytesToHex } from './hashchain.mjs';
+import { verifyChain, recordHash, GENESIS, bytesToHex } from './hashchain.mjs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -128,6 +128,57 @@ export async function exportBackup(store, session, opts = {}) {
   return file;
 }
 
+// 恢复净化（FR-SET3，YG 2026-11-17 拍板）：校验原始完整链通过后调用。
+// 判定 tombstone 需解密看明文 {id,deleted:true}；过滤后重排 sequence + 重算
+// record_hash 重建链（verifyChain 要求从 0 连续、prev_hash 严格链接，不能挖空）。
+// 密文与 nonce 原样保留 → AAD 不变 → DEK 仍能解；只重建链外壳。
+// 返回新链与新的 head_hash / count；若全被过滤则返回空链 + GENESIS。
+function stripTombstones(records, dek, aad, chainCtx) {
+  // 第一遍：解密每条，收集「被删除的 id」集合。
+  // 一个 id 只要出现过 tombstone，就视为已删除——它和它的全部历史版本一并丢弃，
+  // 否则过滤掉 tombstone 后旧版本会以「活跃条目」身份复活（不符「清空回收站」语义）。
+  const decoded = [];
+  const deletedIds = new Set();
+  for (const rec of records) {
+    let pt = null;
+    try {
+      const ptBytes = decryptRecord({ nonce: rec.nonce, ct: rec.ciphertext }, dek, aad);
+      pt = JSON.parse(dec.decode(ptBytes));
+    } catch {
+      // 解密失败不应走到这里——importBackup 已在校验阶段验过链与摘要。
+      // 保守起见：解不开的记录不参与删除判断、且一律保留（规则 6：不静默丢数据）。
+      pt = null;
+    }
+    decoded.push({ rec, pt });
+    if (pt && pt.deleted === true && pt.id) deletedIds.add(pt.id);
+  }
+  // 第二遍：丢弃 tombstone 本身，以及所有 id 属于 deletedIds 的历史版本。
+  const kept = decoded
+    .filter(({ pt }) => {
+      if (!pt) return true;                       // 解不开的：保留
+      if (pt.deleted === true) return false;      // tombstone：丢弃
+      if (pt.id && deletedIds.has(pt.id)) return false; // 已删条目的旧版本：丢弃
+      return true;
+    })
+    .map(x => x.rec);
+  if (kept.length === records.length) {
+    // 没有 tombstone，原链原样返回，head_hash 用校验阶段算出的值
+    return { records: kept, head_hash: kept.length ? kept[kept.length - 1].record_hash : GENESIS };
+  }
+  // 重建链：sequence 从 0 递增，prev_hash 接前一条，record_hash 用与 verifyChain
+  // 相同的 ctx 重算（保持字段名一致，hash 输入口径不变）。
+  let prev = GENESIS;
+  const rebuilt = kept.map((rec, seq) => {
+    const rh = recordHash({
+      ...chainCtx, sequence: seq, prev_hash: prev, nonce: rec.nonce, ciphertext: rec.ciphertext,
+    });
+    const out = { ...rec, sequence: seq, prev_hash: prev, record_hash: rh };
+    prev = rh;
+    return out;
+  });
+  return { records: rebuilt, head_hash: prev };
+}
+
 // 导入：整库覆盖（M1 范围）。任一环节失败都必须抛错且不写 store。
 export async function importBackup(store, file, { masterPassword, recoveryCode } = {}) {
   assertShape(file);
@@ -165,11 +216,15 @@ export async function importBackup(store, file, { masterPassword, recoveryCode }
     throw new Error('E_BACKUP_CORRUPT');
   }
   if (!Array.isArray(records)) throw new Error('E_BACKUP_CORRUPT');
-  const v = verifyChain(records, {
-    vaultId: h.vaultId, deviceId: h.deviceId, segment_id: h.segment_id,
-  });
+  const chainCtx = { vaultId: h.vaultId, deviceId: h.deviceId, segment_id: h.segment_id };
+  const v = verifyChain(records, chainCtx);
   if (!v.ok) throw new Error('E_INTEGRITY_FAIL');
   if (h.head_hash && h.head_hash !== v.head_hash) throw new Error('E_BACKUP_CORRUPT');
+
+  // 恢复净化（FR-SET3）：原始链已校验通过，落盘前丢弃所有 tombstone 并重建链。
+  // 这样恢复完回收站为空、不留历史删除痕迹。密文/AAD 不动，只重建 sequence 与 hash 外壳。
+  const clean = stripTombstones(records, dek, aad, chainCtx);
+  const outRecords = clean.records;
   const meta = {
     vaultId: h.vaultId,
     deviceId: h.deviceId,
@@ -177,13 +232,17 @@ export async function importBackup(store, file, { masterPassword, recoveryCode }
     kdf: h.kdf,
     wrapped_dek: wrapped,
     segment_id: h.segment_id,
-    count: records.length,
-    head_hash: v.head_hash,
+    count: outRecords.length,
+    head_hash: clean.head_hash,
   };
-  // 全部校验通过后才落盘
+  // 全部校验 + 净化通过后才落盘
   await store.saveMeta(meta);
-  await store.saveShard(h.deviceId, records);
-  return { meta, count: records.length, dek, secretKey: sk };
+  await store.saveShard(h.deviceId, outRecords);
+  // 自检：净化后的链必须通过 verifyChain，否则是重建逻辑 bug，绝不交付。
+  const recheck = verifyChain(outRecords, chainCtx);
+  if (!recheck.ok) throw new Error('E_INTEGRITY_FAIL');
+  // count = 净化后落盘的记录数；UI 显示「恢复 N 条」以 loadEntries() 去重结果为准。
+  return { meta, count: outRecords.length, dek, secretKey: sk };
 }
 
 // FR-K5：换 Secret Key 并重新封装同一个 DEK（记录不重加密）。
