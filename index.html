@@ -197,12 +197,7 @@
   </nav>
 
   <footer class="statusbar">
-    <span><span class="mono">MAC-2F</span> · 本机</span>
-    <span class="dot-sep"></span>
-    <span>最后同步 <span class="mono">12:04</span></span>
-    <span class="dot-sep"></span>
-    <span>已解锁 <span class="mono">00:42</span></span>
-    <span class="sb-right mono" id="sb-count">XChaCha20-Poly1305 · 0 条</span>
+    <span>最后同步 <span class="mono" id="sb-last-sync">尚未同步</span></span>
   </footer>
 </section>
 
@@ -263,10 +258,6 @@
           <div class="kv"><span>记录加密</span><span class="mono">XChaCha20-Poly1305</span></div>
           <div class="kv"><span>金库指纹</span><span class="mono" id="vault-fingerprint">—</span></div>
         </div>
-        <div class="srow">
-          <button class="btn ghost">修改主密码</button>
-          <span class="srow-note">仅重新封装金库密钥，不重新加密数据</span>
-        </div>
       </section>
 
       <section class="sgroup">
@@ -284,30 +275,6 @@
           <button class="btn ghost" id="cv-verify">校验并重建</button>
         </div>
         <div class="hint" id="cv-hint"></div>
-      </section>
-
-      <section class="sgroup">
-        <h2 class="sgroup-title">设备</h2>
-        <div class="dev-list">
-          <div class="dev active">
-            <div>
-              <div class="dev-name">MAC-2F <span class="tag-pill">本机</span></div>
-              <div class="dev-meta mono">macOS 15.1 · 最后活跃 现在</div>
-            </div>
-            <span class="dot ok"></span>
-          </div>
-          <div class="dev">
-            <div>
-              <div class="dev-name">iPhone 15</div>
-              <div class="dev-meta mono">iOS 18.1 · 最后活跃 11-04 21:20</div>
-            </div>
-            <button class="btn ghost sm">撤销</button>
-          </div>
-        </div>
-        <div class="srow">
-          <button class="btn ghost">添加设备</button>
-          <span class="srow-note">生成一次性二维码，包含恢复码</span>
-        </div>
       </section>
 
       <section class="sgroup">
