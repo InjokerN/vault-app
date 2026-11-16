@@ -1533,7 +1533,7 @@ function lockVault(){
   const master = $('#master'); if (master) master.value = '';
   const recovery = $('#recovery'); if (recovery) recovery.value = '';
   setPane('list');
-  setView('unlock');
+  showUnlockForm();                      // 锁定后必须是解锁表单（内部含 setView('unlock')）
   // 状态必须与真实副本一致，不能停留在解锁前的快照（规则 5）
   void refreshLockUI().catch(e => toast('锁定后状态刷新失败：' + (e.message || '未知错误')));
   setTimeout(() => {
@@ -2118,9 +2118,18 @@ async function initApp(){
   if (!meta){
     showSetup();
   } else {
-    setView('unlock');
-    setTimeout(() => $('#master').focus(), 60);
+    showUnlockForm();
   }
+}
+
+/* ── 表单互斥：解锁 / 创建同一时刻只显一个（③ §3.3，2026-11-16 修）── */
+function showUnlockForm(){
+  SETUP_MODE = false;
+  $('#unlock-form').style.display = '';
+  $('#setup-form').style.display = 'none';
+  $('#setup-recovery-block').style.display = 'none';
+  setView('unlock');
+  setTimeout(() => $('#master')?.focus(), 60);
 }
 
 /* ── 首次创建金库（M1 设置流）── */
@@ -2371,7 +2380,7 @@ $('#importmodal-ok')?.addEventListener('click', async () => {
     VAULT = null;
     ENTRIES = [];
     closeImportModal();
-    setView('unlock');
+    showUnlockForm();                    // 复位表单：从「创建态」恢复后必须切回解锁页，否则残留创建表单看似空库
     await refreshLockUI();
     // 远端恢复成功 → 同步状态置 clean 并记时间（本地文件恢复同样适用，无副作用）
     try { markSyncedNow(); setSyncState('clean'); } catch {}
@@ -2494,7 +2503,7 @@ $('#destroymodal-ok')?.addEventListener('click', async () => {
     PENDING_VIEW = null;
     state.cat = 'all'; state.tag = null; state.q = '';
     closeDestroyModal();
-    setView('unlock');
+    showSetup();                         // 销毁后 meta 空 → 显式切到「创建金库」表单（表单互斥）
     await refreshLockUI();
     if (r.ok) {
       toast('本机金库已销毁 · 可用备份或恢复码重新建立');
