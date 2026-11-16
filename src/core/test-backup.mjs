@@ -1,6 +1,6 @@
 // src/core/test-backup.mjs — ADR-020/021、FR-SET2/SET3、FR-K5、§5 验收第 8 条
 import { MemStore } from './store.mjs';
-import { setupVault, unlockVault, addRecord, loadEntries } from './session.mjs';
+import { setupVault, unlockVault, addRecord, deleteRecord, loadEntries } from './session.mjs';
 import { exportBackup, importBackup, rotateRecoveryCode } from './backup.mjs';
 
 const MP = 'backup-test-pass-2026';
@@ -67,3 +67,27 @@ const snap = m => JSON.stringify(m, (_k, v) => (v instanceof Uint8Array ? [...v]
 const metaBefore = snap(await store.loadMeta());
 await expectErr('错主密码拒绝轮换', () => rotateRecoveryCode(store, { ...session, secretKey: rot.secretKey }, { masterPassword: 'wrong-pass-2026' }), 'E_UNLOCK');
 console.log('拒绝后 wrapped_dek 未被改写:', metaBefore === snap(await store.loadMeta()));
+
+// ── 5) FR-SET3 恢复净化：删除记录不随备份复活，恢复后回收站为空 ──
+{
+  const s = new MemStore();
+  const { recoveryCode: rc, session: sess } = await setupVault(s, {
+    masterPassword: MP, vaultId: 'v1', deviceId: 'd1',
+  });
+  for (const id of ['x', 'y', 'z']) await addRecord(s, sess, { plaintext: { id, title: id, type: 'login', fields: [] } });
+  await deleteRecord(s, sess, { id: 'x' });   // 软删
+  await deleteRecord(s, sess, { id: 'y' });   // 软删
+  await deleteRecord(s, sess, { id: 'x' });   // 对 x 再彻底删（追加第二条 tombstone）
+  const f = await exportBackup(s, sess);
+  const t = new MemStore();
+  const r = await importBackup(t, f, { masterPassword: MP, recoveryCode: rc });
+  const view = await loadEntries(t, { dek: r.dek });
+  console.log('恢复净化 · 只剩活跃条目 z:', view.length === 1 && view[0].id === 'z');
+  console.log('恢复净化 · 回收站为空:', view.filter(e => e.deleted).length === 0);
+  console.log('恢复净化 · 落盘记录数=1:', (await t.loadShard('d1')).length === 1);
+  console.log('恢复净化 · meta.head_hash 与落盘链头一致:', r.meta.head_hash === (await t.loadMeta()).head_hash);
+  // 篡改备份必须仍被拒绝（净化不能绕过完整性校验）
+  const bad = { ...f, payload: f.payload.slice(0, -4) + 'AAAA' };
+  const t2 = new MemStore();
+  await expectErr('净化不绕过摘要校验', () => importBackup(t2, bad, { masterPassword: MP, recoveryCode: rc }), 'E_BACKUP_CORRUPT');
+}
